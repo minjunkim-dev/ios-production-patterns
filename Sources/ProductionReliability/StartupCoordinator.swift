@@ -44,7 +44,7 @@ public actor StartupCoordinator<Value: Sendable> {
     ///
     /// Concurrent callers share the same build. A transient failure returns the
     /// coordinator to `idle`, so the next call retries. A permanent failure is
-    /// stored and rethrown by every later call.
+    /// stored and rethrown by every later call until `reset()`.
     public func start() async throws -> Value {
         switch state {
         case .ready(let value):
@@ -75,5 +75,18 @@ public actor StartupCoordinator<Value: Sendable> {
                 throw error
             }
         }
+    }
+
+    /// Discards the current result so the next `start()` builds again.
+    ///
+    /// Use this after logout or an account switch, when the initialized value
+    /// no longer belongs to the user. A build that is still running is
+    /// cancelled; its callers receive the cancellation error, and its outcome
+    /// is ignored so it cannot overwrite a newer build.
+    public func reset() {
+        if case .running(let task) = state {
+            task.cancel()
+        }
+        state = .idle
     }
 }

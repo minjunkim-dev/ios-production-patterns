@@ -87,13 +87,56 @@ final class StartupCoordinatorTests: XCTestCase {
         XCTAssertEqual(builds, 1)
     }
 
+    func testResetDiscardsReadyValueAndRebuilds() async throws {
+        let counter = CallCounter()
+        let coordinator = StartupCoordinator<Services> {
+            let build = await counter.increment()
+            return Services(sessionID: "build-\(build)")
+        }
+
+        let first = try await coordinator.start()
+        await coordinator.reset()
+        let second = try await coordinator.start()
+
+        XCTAssertEqual(first, Services(sessionID: "build-1"))
+        XCTAssertEqual(second, Services(sessionID: "build-2"))
+    }
+
+    func testResetWhileRunningCancelsBuildAndAllowsNewBuild() async throws {
+        let counter = CallCounter()
+        let coordinator = StartupCoordinator<Services> {
+            let build = await counter.increment()
+            if build == 1 {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+            return Services(sessionID: "build-\(build)")
+        }
+
+        let inFlight = Task { try await coordinator.start() }
+        while await counter.value < 1 { await Task.yield() }
+
+        await coordinator.reset()
+
+        do {
+            _ = try await inFlight.value
+            XCTFail("Expected CancellationError")
+        } catch is CancellationError {
+            // Expected: reset cancels the build that was in flight.
+        }
+
+        let services = try await coordinator.start()
+        XCTAssertEqual(services, Services(sessionID: "build-2"))
+    }
+
     // MARK: - Helpers
 
     actor CallCounter {
         private(set) var value = 0
 
-        func increment() {
+        @discardableResult
+        func increment() -> Int {
             value += 1
+            return value
         }
     }
 
