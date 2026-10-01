@@ -9,31 +9,49 @@
 public actor StartupCoordinator<Value: Sendable> {
     public typealias Builder = @Sendable () async throws -> Value
 
+    /// Decides whether a build error is worth retrying on the next call.
+    public typealias FailureClassifier = @Sendable (any Error) -> Bool
+
     private enum State {
         case idle
         case running(Task<Value, any Error>)
         case ready(Value)
+        case failed(any Error)
     }
 
     private var state: State = .idle
     private let build: Builder
+    private let isPermanentFailure: FailureClassifier
 
-    /// - Parameter build: Produces the fully initialized value. It must return
-    ///   only after every dependency is ready, so callers never observe a
-    ///   partially initialized state.
-    public init(build: @escaping Builder) {
+    /// - Parameters:
+    ///   - isPermanentFailure: Returns `true` for errors that a retry cannot fix,
+    ///     such as an unsupported local data format. The coordinator then keeps
+    ///     rethrowing that error instead of rebuilding. Every other error is
+    ///     treated as transient and the next call retries. Defaults to never.
+    ///   - build: Produces the fully initialized value. It must return only after
+    ///     every dependency is ready, so callers never observe a partially
+    ///     initialized state.
+    public init(
+        isPermanentFailure: @escaping FailureClassifier = { _ in false },
+        build: @escaping Builder
+    ) {
+        self.isPermanentFailure = isPermanentFailure
         self.build = build
     }
 
     /// Returns the initialized value, starting the build only when nothing is
     /// running and no result exists yet.
     ///
-    /// Concurrent callers share the same build. A failed build returns the
-    /// coordinator to `idle`, so the next call retries.
+    /// Concurrent callers share the same build. A transient failure returns the
+    /// coordinator to `idle`, so the next call retries. A permanent failure is
+    /// stored and rethrown by every later call.
     public func start() async throws -> Value {
         switch state {
         case .ready(let value):
             return value
+
+        case .failed(let error):
+            throw error
 
         case .running(let task):
             return try await task.value
@@ -52,7 +70,7 @@ public actor StartupCoordinator<Value: Sendable> {
                 return value
             } catch {
                 if case .running(let current) = state, current == task {
-                    state = .idle
+                    state = isPermanentFailure(error) ? .failed(error) : .idle
                 }
                 throw error
             }

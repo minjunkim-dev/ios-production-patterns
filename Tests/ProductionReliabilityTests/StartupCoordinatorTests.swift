@@ -7,6 +7,7 @@ final class StartupCoordinatorTests: XCTestCase {
     }
 
     struct TransientError: Error, Equatable {}
+    struct PermanentError: Error, Equatable {}
 
     func testConcurrentStartsShareOneBuild() async throws {
         let counter = CallCounter()
@@ -62,6 +63,28 @@ final class StartupCoordinatorTests: XCTestCase {
 
         let services = try await coordinator.start()
         XCTAssertEqual(services, Services(sessionID: "retried"))
+    }
+
+    func testPermanentFailureIsKeptAndNotRetried() async throws {
+        let counter = CallCounter()
+        let coordinator = StartupCoordinator<Services>(
+            isPermanentFailure: { $0 is PermanentError }
+        ) {
+            await counter.increment()
+            throw PermanentError()
+        }
+
+        for _ in 0..<2 {
+            do {
+                _ = try await coordinator.start()
+                XCTFail("Expected PermanentError")
+            } catch is PermanentError {
+                // Expected on every call.
+            }
+        }
+
+        let builds = await counter.value
+        XCTAssertEqual(builds, 1)
     }
 
     // MARK: - Helpers
