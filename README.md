@@ -4,6 +4,12 @@
 [![CI](https://github.com/minjunkim-dev/ios-production-patterns/actions/workflows/ci.yml/badge.svg)](https://github.com/minjunkim-dev/ios-production-patterns/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> [!NOTE]
+> **Archived (2026-10).** This package moved into the blog repository, next to the articles that explain it. Each article now shows code from a tested file there.
+> - `VersionGate` → [minjunkim-dev.github.io: examples/react-native-force-update-fail-open](https://github.com/minjunkim-dev/minjunkim-dev.github.io/tree/main/examples/react-native-force-update-fail-open)
+> - `StartupCoordinator` → [examples/ios-startup-idempotent-initialization](https://github.com/minjunkim-dev/minjunkim-dev.github.io/tree/main/examples/ios-startup-idempotent-initialization) (as `RecoverableStartupCoordinator`)
+> - `LatestRequestGate` and `withTimeout` have no article and stay only here.
+
 A small Swift package that turns recurring mobile-production failure modes into explicit, testable policies.
 
 This repository contains independently written examples. It does **not** include company source code, private APIs, customer data, or internal assets.
@@ -18,14 +24,14 @@ Mobile applications often fail at boundaries rather than happy paths:
 - several entry points trigger the same initialization and observe partial state.
 
 The package keeps those boundaries small enough to test deterministically.
-Each pattern below starts with the production incident it came from. The
-incidents are described generically; no product code or data is included.
+Each pattern below starts with the failure it prevents. The failures are
+described generically; no product code or data is included.
 
 ## Included patterns
 
 ### 1. Fail-open version gate
 
-> **Seen in production:** a remote update policy arrived with a malformed minimum version. A strict comparison would have treated every installed build as outdated and locked all users on the update screen.
+> **Failure it prevents:** a remote update policy arrives with a malformed minimum version. A strict comparison would treat every installed build as outdated and lock all users on the update screen. The production app this came from fails open when the policy cannot be read; this package applies the same rule to malformed values.
 
 `VersionGate` requires an update only when both semantic versions are valid and the current version is lower than the minimum.
 
@@ -41,7 +47,7 @@ Malformed remote input resolves to `.allow`, preventing a broken payload from gl
 
 ### 2. Latest-request-wins gate
 
-> **Seen in production:** after the app returned to the foreground, a slow response from the previous fetch landed after the fresh one and pinned a stale program card on screen until the next restart.
+> **Failure it prevents:** after the app returns to the foreground, a slow response from the previous fetch lands after the fresh one and leaves stale data on screen.
 
 `LatestRequestGate` is an actor that issues generation tokens. A response mutates UI state only if its token is still current.
 
@@ -57,7 +63,7 @@ Starting another request or calling `invalidate()` makes older work stale.
 
 ### 3. Bounded async operation
 
-> **Seen in production:** startup awaited a remote policy call with no deadline. On a poor network the splash screen simply never went away.
+> **Failure it prevents:** startup awaits a remote policy call with no deadline, so on a poor network the splash screen never goes away.
 
 `withTimeout` races an async operation against an explicit deadline and cancels the losing task.
 
@@ -69,9 +75,11 @@ let policy = try await withTimeout(nanoseconds: 3_000_000_000) {
 
 The caller owns the fallback policy, so timeout handling remains visible at the product boundary.
 
+**Limit:** a task group waits for every child before it returns. `withTimeout` therefore returns on time only when `operation` responds to cancellation (as `URLSession` and `Task.sleep` do). An operation that ignores cancellation delays the timeout until it finishes.
+
 ### 4. Shared startup coordinator
 
-> **Seen in production:** the app delegate, a reconnecting scene, and a deep link each called the same initialization. Work ran twice and one caller observed a half-built state.
+> **Failure it prevents:** the app delegate, a reconnecting scene, and a deep link each call the same initialization. Work runs twice and one caller observes a half-built state.
 
 `StartupCoordinator` stores the running `Task`, so concurrent callers await the same build instead of starting another one. A finished value is reused; a transient failure returns to `idle` and retries on the next call.
 
